@@ -1,0 +1,7 @@
+services:
+  serverless:
+    build: ../docker-aws-lambda-serverless-framework
+    volumes:
+      - '.:/opt'
+    tty: true
+    stdin_open: true
