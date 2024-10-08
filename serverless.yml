@@ -8,11 +8,17 @@ frameworkVersion: "3"
 plugins:
   - serverless-webpack
   - serverless-iam-roles-per-function #インストールしたプラグイン
+  - serverless-api-gateway-throttling
+  - serverless-s3-sync
 
 provider:
   name: aws
   runtime: nodejs16.x
   region: ap-northeast-1
+  httpApi:
+    cors:
+      allowedOrigins:
+        - "http://${self:custom.bucketName}.s3-website-ap-northeast-1.amazonaws.com"
 
 functions:
   first:
@@ -20,6 +26,10 @@ functions:
 
   hello:
     handler: src/hello.handler
+    events:
+      - httpApi:
+          method: get
+          path: /hello
 
   costNotifier:
     handler: src/costNotifier.handler
@@ -36,3 +46,77 @@ functions:
         Action:
           - ce:GetCostAndUsage
         Resource: "*"
+
+  taskPost:
+    handler: src/taskHandler.post
+    events:
+      - httpApi:
+          method: post
+          path: /tasks
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:PutItem
+        Resource:
+          "arn:aws:dynamodb:*:*:table/tasks"
+
+  taskList:
+    handler: src/taskHandler.list
+    events:
+      - httpApi:
+          method: get
+          path: /tasks
+    iamRoleStatements:
+      - Effect: Allow
+        Action:
+          - dynamodb:Scan
+        Resource: "arn:aws:dynamodb:*:*:table/tasks"
+custom:
+  apiGatewayThrottling:
+    maxRequestsPerSecond: 10 #秒間10回のアクセス許可
+    maxConcurrentRequests: 5 #アクセスが多いときはさらに一時的に5回のアクセス許可
+  bucketName: udemy-aws-atoru
+  s3Sync:
+    buckets:
+      - bucketName: ${self:custom.bucketName}
+        localDir: static
+
+resources:
+  Resources:
+    TasksDynamoDBTable:
+      Type: AWS::DynamoDB::Table
+      Properties:
+        TableName: tasks
+        AttributeDefinitions:
+          - AttributeName: id
+            AttributeType: S #idは文字列
+        KeySchema:
+          - AttributeName: id # プライマリーキー
+            KeyType: HASH
+        ProvisionedThroughput: # 1秒間に許可するアクセス数
+          ReadCapacityUnits: 5
+          WriteCapacityUnits: 5
+    StaticSiteS3Bucket:
+      Type: AWS::S3::Bucket
+      Properties:
+        BucketName: ${self:custom.bucketName}
+        PublicAccessBlockConfiguration:
+          BlockPublicAcls: false
+          BlockPublicPolicy: false
+          IgnorePublicAcls: false
+          RestrictPublicBuckets: false
+        WebsiteConfiguration:
+          IndexDocument: index.html
+    StaticSiteS3BucketPolicy:
+      Type: AWS::S3::BucketPolicy
+      Properties:
+        Bucket:
+          Ref: StaticSiteS3Bucket
+        PolicyDocument:
+          Statement:
+            - Sid: PublicReadGetObject
+              Effect: Allow
+              Principal: "*"
+              Action:
+                - s3:GetObject
+              Resource: "arn:aws:s3:::${self:custom.bucketName}/*"
